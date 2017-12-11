@@ -12,7 +12,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             [Fact]
             public Task AbortAsyncTriggersClosedEventWithException()
             {
-                return WithConnectionAsync(CreateConnection(), async (connection, closed) =>
+                return WithConnectionAsync(CreateConnectionWithTestTransport(), async (connection, closed) =>
                 {
                     // Start the connection
                     await connection.StartAsync().OrTimeout();
@@ -30,7 +30,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             [Fact]
             public Task AbortAsyncWhileStoppingTriggersClosedEventWithException()
             {
-                return WithConnectionAsync(CreateConnection(onTransportStop: SyncPoint.Create(2, out var syncPoints)), async (connection, closed) =>
+                return WithConnectionAsync(CreateConnectionWithTestTransport(onTransportStop: SyncPoint.Create(2, out var syncPoints)), async (connection, closed) =>
                 {
                     // Start the connection
                     await connection.StartAsync().OrTimeout();
@@ -64,7 +64,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             [Fact]
             public Task StopAsyncWhileAbortingTriggersClosedEventWithoutException()
             {
-                return WithConnectionAsync(CreateConnection(onTransportStop: SyncPoint.Create(2, out var syncPoints)), async (connection, closed) =>
+                return WithConnectionAsync(CreateConnectionWithTestTransport(onTransportStop: SyncPoint.Create(2, out var syncPoints)), async (connection, closed) =>
                 {
                     // Start the connection
                     await connection.StartAsync().OrTimeout();
@@ -91,7 +91,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             [Fact]
             public Task StartAsyncCannotBeCalledWhileAbortAsyncInProgress()
             {
-                return WithConnectionAsync(CreateConnection(onTransportStop: SyncPoint.Create(out var syncPoint)), async (connection, closed) =>
+                return WithConnectionAsync(CreateConnectionWithTestTransport(onTransportStop: SyncPoint.Create(out var syncPoint)), async (connection, closed) =>
                 {
                     // Start the connection
                     await connection.StartAsync().OrTimeout();

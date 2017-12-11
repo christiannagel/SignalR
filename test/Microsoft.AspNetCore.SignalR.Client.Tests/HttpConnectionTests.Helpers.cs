@@ -1,4 +1,5 @@
 using System;
+using System.Net.Http;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Sockets;
@@ -10,7 +11,21 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
 {
     public partial class HttpConnectionTests
     {
-        private static HttpConnection CreateConnection(Func<Task> onTransportStop = null, Func<Task> onTransportStart = null)
+        private static HttpConnection CreateConnection(HttpMessageHandler httpHandler = null)
+        {
+            var connection = new HttpConnection(
+                new Uri("http://fakeuri.org/"),
+                TransportType.LongPolling,
+                NullLoggerFactory.Instance,
+                new HttpOptions()
+                {
+                    HttpMessageHandler = httpHandler ?? new TestHttpMessageHandler(),
+                });
+
+            return connection;
+        }
+
+        private static HttpConnection CreateConnectionWithTestTransport(Func<Task> onTransportStop = null, Func<Task> onTransportStart = null)
         {
             var httpHandler = new TestHttpMessageHandler();
             var transportFactory = new TestTransportFactory(new TestTransport(onTransportStop, onTransportStart));
@@ -43,8 +58,8 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
                     }
                 };
 
-                // Using OrTimeout here will help catch tests that don't use it within their implementations.
-                await body(connection, closedTcs.Task).OrTimeout();
+                // Using OrTimeout here will hide any timeout issues in the test :(.
+                await body(connection, closedTcs.Task);
             }
             finally
             {

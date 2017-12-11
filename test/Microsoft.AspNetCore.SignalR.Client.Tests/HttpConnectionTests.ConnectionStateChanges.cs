@@ -1,5 +1,9 @@
 using System;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Client.Tests;
 using Xunit;
 
 namespace Microsoft.AspNetCore.SignalR.Client.Tests
@@ -11,7 +15,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             [Fact]
             public Task CannotStartRunningConnection()
             {
-                return WithConnectionAsync(CreateConnection(), async (connection, closed) =>
+                return WithConnectionAsync(CreateConnectionWithTestTransport(), async (connection, closed) =>
                 {
                     await connection.StartAsync();
                     var exception =
@@ -25,7 +29,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             [Fact]
             public async Task CannotStartConnectionDisposedAfterStartingAsync()
             {
-                var connection = CreateConnection();
+                var connection = CreateConnectionWithTestTransport();
                 await connection.StartAsync();
                 await connection.DisposeAsync();
                 var exception =
@@ -38,7 +42,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             [Fact]
             public async Task CannotStartDisposedConnectionAsync()
             {
-                var connection = CreateConnection();
+                var connection = CreateConnectionWithTestTransport();
                 await connection.DisposeAsync();
                 var exception =
                     await Assert.ThrowsAsync<InvalidOperationException>(
@@ -51,7 +55,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             public Task CanDisposeStartingConnection()
             {
                 return WithConnectionAsync(
-                    CreateConnection(onTransportStart: SyncPoint.Create(out var transportStart), onTransportStop: SyncPoint.Create(out var transportStop)),
+                    CreateConnectionWithTestTransport(onTransportStart: SyncPoint.Create(out var transportStart), onTransportStop: SyncPoint.Create(out var transportStop)),
                     async (connection, closed) =>
                 {
                     // Start the connection and wait for the transport to start up.
@@ -92,7 +96,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
                 }
 
                 return WithConnectionAsync(
-                    CreateConnection(onTransportStart: OnTransportStart),
+                    CreateConnectionWithTestTransport(onTransportStart: OnTransportStart),
                     async (connection, closed) =>
                 {
                     var actual = await Assert.ThrowsAsync<Exception>(() => connection.StartAsync());
@@ -109,7 +113,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             public Task CanStartStoppedConnection()
             {
                 return WithConnectionAsync(
-                    CreateConnection(),
+                    CreateConnectionWithTestTransport(),
                     async (connection, closed) =>
                 {
                     await connection.StartAsync().OrTimeout();
@@ -122,7 +126,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             public Task CanStopStartingConnection()
             {
                 return WithConnectionAsync(
-                    CreateConnection(onTransportStart: SyncPoint.Create(out var transportStart)),
+                    CreateConnectionWithTestTransport(onTransportStart: SyncPoint.Create(out var transportStart)),
                     async (connection, closed) =>
                 {
                     // Start and wait for the transport to start up.
@@ -137,6 +141,51 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
                     await startTask.OrTimeout();
                     await stopTask.OrTimeout();
                     await closed.OrTimeout();
+                });
+            }
+
+            [Fact]
+            public Task StoppingStoppingConnectionNoOps()
+            {
+                return WithConnectionAsync(
+                    CreateConnectionWithTestTransport(),
+                    async (connection, closed) =>
+                {
+                    await connection.StartAsync().OrTimeout();
+                    await Task.WhenAll(connection.StopAsync(), connection.StopAsync()).OrTimeout();
+                    await closed.OrTimeout();
+                });
+            }
+
+            [Fact]
+            public Task CanStartConnectionAfterConnectionStoppedWithError()
+            {
+                var httpHandler = new TestHttpMessageHandler();
+
+                var longPollResult = new TaskCompletionSource<HttpResponseMessage>();
+                httpHandler.OnLongPoll(cancellationToken => longPollResult.Task);
+
+                httpHandler.OnSocketSend((data, _) =>
+                {
+                    Assert.Collection(data, i => Assert.Equal(0x42, i));
+                    return Task.FromResult(ResponseUtils.CreateResponse(HttpStatusCode.InternalServerError));
+                });
+
+                return WithConnectionAsync(
+                    CreateConnection(httpHandler),
+                    async (connection, closed) =>
+                {
+                    await connection.StartAsync().OrTimeout();
+                    await connection.SendAsync(new byte[] { 0x42 }).OrTimeout();
+
+                    // Wait for the connection to close, because the send failed.
+                    await closed.OrTimeout();
+
+                    // Unblock long polls.
+                    longPollResult.TrySetResult(ResponseUtils.CreateResponse(HttpStatusCode.NoContent));
+
+                    // Start it up again
+                    await connection.StartAsync().OrTimeout();
                 });
             }
         }
