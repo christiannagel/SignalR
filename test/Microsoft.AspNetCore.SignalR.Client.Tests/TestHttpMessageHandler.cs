@@ -18,7 +18,7 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             }
             else
             {
-                return Task.FromException<HttpResponseMessage>(new InvalidOperationException($"Http endpoint not implemented: {request.RequestUri}"));
+                return Task.FromException<HttpResponseMessage>(new InvalidOperationException($"Http endpoint not implemented: {request.Method} {request.RequestUri}"));
             }
         }
     }
