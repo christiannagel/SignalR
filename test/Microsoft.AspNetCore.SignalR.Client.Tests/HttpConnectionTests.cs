@@ -10,6 +10,8 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Client.Tests;
+using Microsoft.AspNetCore.Sockets;
+using Microsoft.AspNetCore.Sockets.Client;
 using Microsoft.AspNetCore.Sockets.Client.Http;
 using Microsoft.AspNetCore.Sockets.Features;
 using Microsoft.Extensions.Logging;
@@ -19,7 +21,10 @@ using Moq.Protected;
 using Xunit;
 using Xunit.Abstractions;
 
-namespace Microsoft.AspNetCore.Sockets.Client.Tests
+// This is needed because there's a System.Net.TransportType in net461 (it's internal in netcoreapp).
+using TransportType = Microsoft.AspNetCore.Sockets.TransportType;
+
+namespace Microsoft.AspNetCore.SignalR.Client.Tests
 {
     public partial class HttpConnectionTests : LoggedTest
     {
@@ -48,225 +53,6 @@ namespace Microsoft.AspNetCore.Sockets.Client.Tests
         {
             Assert.Throws<ArgumentOutOfRangeException>(
                 () => new HttpConnection(new Uri("http://fakeuri.org/"), requestedTransportType));
-        }
-
-        [Fact]
-        public async Task CannotStartRunningConnection()
-        {
-            var mockHttpHandler = new Mock<HttpMessageHandler>();
-            mockHttpHandler.Protected()
-                .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
-                .Returns<HttpRequestMessage, CancellationToken>(async (request, cancellationToken) =>
-                {
-                    await Task.Yield();
-
-                    return ResponseUtils.IsNegotiateRequest(request)
-                        ? ResponseUtils.CreateResponse(HttpStatusCode.OK, ResponseUtils.CreateNegotiationResponse())
-                        : ResponseUtils.CreateResponse(HttpStatusCode.OK);
-                });
-
-            var connection = new HttpConnection(new Uri("http://fakeuri.org/"), TransportType.LongPolling, loggerFactory: null,
-                httpOptions: new HttpOptions { HttpMessageHandler = mockHttpHandler.Object });
-            try
-            {
-                await connection.StartAsync();
-                var exception =
-                    await Assert.ThrowsAsync<InvalidOperationException>(
-                        async () => await connection.StartAsync());
-                Assert.Equal("Cannot start a connection that is not in the Disconnected state.", exception.Message);
-            }
-            finally
-            {
-                await connection.DisposeAsync();
-            }
-        }
-
-        [Fact]
-        public async Task CannotStartConnectionDisposedAfterStarting()
-        {
-            var mockHttpHandler = new Mock<HttpMessageHandler>();
-            mockHttpHandler.Protected()
-                .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
-                .Returns<HttpRequestMessage, CancellationToken>(async (request, cancellationToken) =>
-                {
-                    await Task.Yield();
-                    return ResponseUtils.IsNegotiateRequest(request)
-                        ? ResponseUtils.CreateResponse(HttpStatusCode.OK, ResponseUtils.CreateNegotiationResponse())
-                        : ResponseUtils.CreateResponse(HttpStatusCode.OK);
-                });
-
-            var connection = new HttpConnection(new Uri("http://fakeuri.org/"), TransportType.LongPolling, loggerFactory: null,
-                httpOptions: new HttpOptions { HttpMessageHandler = mockHttpHandler.Object });
-
-            await connection.StartAsync();
-            await connection.DisposeAsync();
-            var exception =
-                await Assert.ThrowsAsync<InvalidOperationException>(
-                    async () => await connection.StartAsync());
-
-            Assert.Equal("Cannot start a connection that is not in the Disconnected state.", exception.Message);
-        }
-
-        [Fact]
-        public async Task CannotStartDisposedConnection()
-        {
-            using (var httpClient = new HttpClient())
-            {
-                var connection = new HttpConnection(new Uri("http://fakeuri.org/"));
-                await connection.DisposeAsync();
-                var exception =
-                    await Assert.ThrowsAsync<InvalidOperationException>(
-                        async () => await connection.StartAsync());
-
-                Assert.Equal("Cannot start a connection that is not in the Disconnected state.", exception.Message);
-            }
-        }
-
-        [Fact]
-        public async Task CanDisposeStartingConnection()
-        {
-            // Used to make sure StartAsync is not completed before DisposeAsync is called
-            var releaseNegotiateTcs = new TaskCompletionSource<object>();
-            // Used to make sure that DisposeAsync runs after we check the state in StartAsync
-            var allowDisposeTcs = new TaskCompletionSource<object>();
-            // Used to make sure that DisposeAsync continues only after StartAsync finished
-            var releaseDisposeTcs = new TaskCompletionSource<object>();
-
-            var mockHttpHandler = new Mock<HttpMessageHandler>();
-            mockHttpHandler.Protected()
-                .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
-                .Returns<HttpRequestMessage, CancellationToken>(async (request, cancellationToken) =>
-                {
-                    await Task.Yield();
-                    // allow DisposeAsync to continue once we know we are past the connection state check
-                    allowDisposeTcs.SetResult(null);
-                    await releaseNegotiateTcs.Task;
-                    return ResponseUtils.IsNegotiateRequest(request)
-                        ? ResponseUtils.CreateResponse(HttpStatusCode.OK, ResponseUtils.CreateNegotiationResponse())
-                        : ResponseUtils.CreateResponse(HttpStatusCode.OK);
-                });
-
-            var transport = new Mock<ITransport>();
-            Channel<byte[], SendMessage> channel = null;
-            transport.SetupGet(t => t.Mode).Returns(TransferMode.Text);
-            transport.Setup(t => t.StartAsync(It.IsAny<Uri>(), It.IsAny<Channel<byte[], SendMessage>>(), It.IsAny<TransferMode>(), It.IsAny<string>(), It.IsAny<IConnection>()))
-                .Returns<Uri, Channel<byte[], SendMessage>, TransferMode, string, IConnection>((_, c, __, ___, ____) =>
-                {
-                    channel = c;
-                    return Task.CompletedTask;
-                });
-            transport.Setup(t => t.StopAsync()).Returns(async () =>
-            {
-                await releaseDisposeTcs.Task;
-                channel.Writer.TryComplete();
-            });
-            var connection = new HttpConnection(new Uri("http://fakeuri.org/"), new TestTransportFactory(transport.Object), loggerFactory: null,
-                httpOptions: new HttpOptions { HttpMessageHandler = mockHttpHandler.Object });
-
-            var startTask = connection.StartAsync();
-            await allowDisposeTcs.Task;
-            var disposeTask = connection.DisposeAsync();
-            // allow StartAsync to continue once DisposeAsync has started
-            releaseNegotiateTcs.SetResult(null);
-
-            // unblock DisposeAsync only after StartAsync completed
-            await startTask.OrTimeout();
-            releaseDisposeTcs.SetResult(null);
-            await disposeTask.OrTimeout();
-        }
-
-        [Fact]
-        public async Task CanStartConnectionThatFailedToStart()
-        {
-            var failNegotiate = true;
-            var mockHttpHandler = new Mock<HttpMessageHandler>();
-            mockHttpHandler.Protected()
-                .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
-                .Returns<HttpRequestMessage, CancellationToken>(async (request, cancellationToken) =>
-                {
-                    await Task.Yield();
-
-                    if (ResponseUtils.IsNegotiateRequest(request))
-                    {
-                        return failNegotiate
-                            ? ResponseUtils.CreateResponse(HttpStatusCode.InternalServerError)
-                            : ResponseUtils.CreateResponse(HttpStatusCode.OK, ResponseUtils.CreateNegotiationResponse());
-                    }
-
-                    return ResponseUtils.CreateResponse(HttpStatusCode.OK);
-                });
-
-            var connection = new HttpConnection(new Uri("http://fakeuri.org/"), TransportType.LongPolling, loggerFactory: null,
-                httpOptions: new HttpOptions { HttpMessageHandler = mockHttpHandler.Object });
-
-            try
-            {
-                await connection.StartAsync().OrTimeout();
-            }
-            catch { }
-            failNegotiate = false;
-            await connection.StartAsync().OrTimeout();
-            await connection.DisposeAsync().OrTimeout();
-        }
-
-        [Fact]
-        public async Task CanStartStoppedConnection()
-        {
-            var mockHttpHandler = new Mock<HttpMessageHandler>();
-            mockHttpHandler.Protected()
-                .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
-                .Returns<HttpRequestMessage, CancellationToken>(async (request, cancellationToken) =>
-                {
-                    await Task.Yield();
-                    return ResponseUtils.IsNegotiateRequest(request)
-                        ? ResponseUtils.CreateResponse(HttpStatusCode.OK, ResponseUtils.CreateNegotiationResponse())
-                        : ResponseUtils.CreateResponse(HttpStatusCode.OK);
-                });
-
-            var connection = new HttpConnection(new Uri("http://fakeuri.org/"), TransportType.LongPolling, loggerFactory: null,
-                httpOptions: new HttpOptions { HttpMessageHandler = mockHttpHandler.Object });
-
-            await connection.StartAsync().OrTimeout();
-            await connection.StopAsync().OrTimeout();
-            await connection.StartAsync().OrTimeout();
-            await connection.DisposeAsync().OrTimeout();
-        }
-
-        [Fact]
-        public async Task CanStopStartingConnection()
-        {
-            var allowStopTcs = new TaskCompletionSource<object>();
-            var mockHttpHandler = new Mock<HttpMessageHandler>();
-            mockHttpHandler.Protected()
-                .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
-                .Returns<HttpRequestMessage, CancellationToken>(async (request, cancellationToken) =>
-                {
-                    await Task.Yield();
-                    if (ResponseUtils.IsNegotiateRequest(request))
-                    {
-                        allowStopTcs.SetResult(null);
-                        return ResponseUtils.CreateResponse(HttpStatusCode.OK, ResponseUtils.CreateNegotiationResponse());
-                    }
-                    else
-                    {
-                        var content = request.Content != null ? await request.Content.ReadAsByteArrayAsync() : null;
-                        return (content?.Length == 1 && content[0] == 0x42)
-                            ? ResponseUtils.CreateResponse(HttpStatusCode.InternalServerError)
-                            : ResponseUtils.CreateResponse(HttpStatusCode.OK);
-                    }
-                });
-
-            var connection = new HttpConnection(new Uri("http://fakeuri.org/"), TransportType.LongPolling, loggerFactory: null,
-                httpOptions: new HttpOptions { HttpMessageHandler = mockHttpHandler.Object });
-
-            var closeTcs = new TaskCompletionSource<object>();
-            connection.Closed += e => closeTcs.TrySetResult(null);
-
-            var startTask = connection.StartAsync();
-            await allowStopTcs.Task.OrTimeout();
-
-            await Task.WhenAll(startTask, connection.StopAsync()).OrTimeout();
-            await closeTcs.Task.OrTimeout();
         }
 
         [Fact]
