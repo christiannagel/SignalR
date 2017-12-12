@@ -564,7 +564,7 @@ namespace Microsoft.AspNetCore.SignalR.Redis
                     var tasks = new List<Task>();
                     foreach (var groupConnection in group.Connections)
                     {
-                        if (message.ExcludedIds?.Contains(groupConnection.ConnectionId) == true)
+                        if (message.ExcludedIds.Contains(groupConnection.ConnectionId))
                         {
                             continue;
                         }
@@ -606,17 +606,11 @@ namespace Microsoft.AspNetCore.SignalR.Redis
         private class RedisExcludeClientsMessage : InvocationMessage
         {
             public IReadOnlyList<string> ExcludedIds;
-            public string GroupName;
 
-            public RedisExcludeClientsMessage(string invocationId, bool nonBlocking, string target, IReadOnlyList<string> excludedIds, params object[] arguments):
-                 this(invocationId, nonBlocking, target, excludedIds, groupName: null, arguments: arguments)
-            { }
-
-            public RedisExcludeClientsMessage(string invocationId, bool nonBlocking, string target, IReadOnlyList<string> excludedIds, string groupName, params object[] arguments)
+            public RedisExcludeClientsMessage(string invocationId, bool nonBlocking, string target, IReadOnlyList<string> excludedIds, params object[] arguments)
                 : base(invocationId, nonBlocking, target, argumentBindingException: null, arguments: arguments)
             {
                 ExcludedIds = excludedIds;
-                GroupName = groupName;
             }
         }
 
