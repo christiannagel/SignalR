@@ -44,16 +44,18 @@ namespace Microsoft.AspNetCore.SignalR
     {
         private readonly string _groupName;
         private readonly HubLifetimeManager<THub> _lifetimeManager;
+        private IReadOnlyList<string> _excludedIds;
 
-        public GroupExceptProxy(HubLifetimeManager<THub> lifetimeManager, string groupName)
+        public GroupExceptProxy(HubLifetimeManager<THub> lifetimeManager, string groupName, IReadOnlyList<string> excludedIds)
         {
             _lifetimeManager = lifetimeManager;
             _groupName = groupName;
+            _excludedIds = excludedIds;
         }
 
         public Task InvokeAsync(string method, params object[] args)
         {
-            return _lifetimeManager.InvokeGroupAsync(_groupName, method, args);
+            return _lifetimeManager.InvokeGroupExceptAsync(_groupName, method, args, _excludedIds);
         }
     }
 
