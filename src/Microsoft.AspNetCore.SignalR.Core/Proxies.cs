@@ -40,6 +40,23 @@ namespace Microsoft.AspNetCore.SignalR
         }
     }
 
+    public class GroupExceptProxy<THub> : IClientProxy
+    {
+        private readonly string _groupName;
+        private readonly HubLifetimeManager<THub> _lifetimeManager;
+
+        public GroupExceptProxy(HubLifetimeManager<THub> lifetimeManager, string groupName)
+        {
+            _lifetimeManager = lifetimeManager;
+            _groupName = groupName;
+        }
+
+        public Task InvokeAsync(string method, params object[] args)
+        {
+            return _lifetimeManager.InvokeGroupAsync(_groupName, method, args);
+        }
+    }
+
     public class AllClientProxy<THub> : IClientProxy
     {
         private readonly HubLifetimeManager<THub> _lifetimeManager;
