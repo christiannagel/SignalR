@@ -561,7 +561,7 @@ namespace Microsoft.AspNetCore.SignalR.Redis
                 {
                     var message = DeserializeMessage<RedisExcludeClientsMessage>(data);
 
-                    var tasks = new List<Task>(group.Connections.Count);
+                    var tasks = new List<Task>();
                     foreach (var groupConnection in group.Connections)
                     {
                         if (message.ExcludedIds?.Contains(groupConnection.ConnectionId) == true)
